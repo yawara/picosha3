@@ -83,21 +83,32 @@ namespace picosha3 {
         }
     };
 
-    template <typename InIter>
-    inline void absorb(InIter first, InIter last, state_t& A) {
-        auto pos = first;
-        for(size_t y = 0; y < 5; ++y) {
-            for(size_t x = 0; x < 5; ++x) {
-                for(size_t i = 0; i < 8; ++i) {
-                    pos = first + 8 * (5 * y + x) + i;
-                    if(pos == last) {
-                        return;
-                    };
-                    uint64_t tmp = *pos;
-                    A[x][y] ^= (tmp << (i * 8));
-                }
+    namespace {
+        inline void next(size_t& x, size_t& y, size_t& i) {
+            if(++i != 8) {
+                return;
+            }
+            i = 0;
+            if(++x != 5) {
+                return;
+            }
+            x = 0;
+            if(++y != 5) {
+                return;
             }
         }
+    } // namespace
+
+    template <typename InIter>
+    inline void absorb(InIter first, InIter last, state_t& A) {
+        size_t x = 0;
+        size_t y = 0;
+        size_t i = 0;
+        for(; first != last && y < 5; ++first) {
+            auto tmp = static_cast<uint64_t>(*first);
+            A[x][y] ^= (tmp << (i * 8));
+            next(x, y, i);
+        };
     }
 
     template <typename InContainer>
@@ -107,20 +118,19 @@ namespace picosha3 {
 
     template <typename OutIter>
     inline OutIter squeeze(const state_t& A, OutIter first, OutIter last) {
-        for(size_t y = 0; y < 5; ++y) {
-            for(size_t x = 0; x < 5; ++x) {
-                uint64_t tmp = A[x][y];
-                auto p = reinterpret_cast<byte_t*>(&tmp);
-                for(size_t i = 0; i < 8; ++i) {
-                    auto pos = first + 8 * (5 * y + x) + i;
-                    if(pos == last) {
-                        return last;
-                    }
-                    *pos = *(p + i);
-                }
+        size_t x = 0;
+        size_t y = 0;
+        size_t i = 0;
+        for(; first != last; ++first) {
+            auto tmp = static_cast<uint64_t>(A[x][y]);
+            auto p = reinterpret_cast<byte_t*>(&tmp);
+            *first = *(p + i);
+            next(x, y, i);
+            if(y == 5) {
+                return first;
             }
         }
-        return first + b_bytes;
+        return last;
     };
 
     template <typename OutContainer>
