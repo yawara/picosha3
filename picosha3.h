@@ -2,6 +2,8 @@
 #define PICOSHA3_H
 
 #include <array>
+#include <iomanip>
+#include <sstream>
 
 namespace picosha3 {
     constexpr static size_t b_bytes = 200;
@@ -169,7 +171,7 @@ namespace picosha3 {
 
     template <typename InIter, typename OutIter, size_t capacity_bytes>
     inline void keccak(InIter in_first, InIter in_last, OutIter out_first,
-                        OutIter out_last) {
+                       OutIter out_last) {
         constexpr auto rate_bytes = b_bytes - capacity_bytes;
         sponge<InIter, OutIter, rate_bytes>(in_first, in_last, out_first,
                                             out_last);
@@ -192,11 +194,16 @@ namespace picosha3 {
         return hash;
     };
 
-    template <typename InIter>
-    inline std::string sha3_256_hex_string(InIter first, InIter last);
-
     template <typename InContainer>
-    inline std::string sha3_256_hex_string(InContainer& src);
+    inline std::string sha3_256_hex_string(const InContainer& src) {
+        auto hash = sha3_256(src.cbegin(), src.cend());
+        std::stringstream ss;
+        ss << std::hex;
+        for(const auto& c : hash) {
+            ss << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+        };
+        return ss.str();
+    }
 
 } // namespace picosha3
 
