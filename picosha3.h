@@ -6,7 +6,8 @@
 #include <sstream>
 
 namespace picosha3 {
-    constexpr static size_t b_bytes = 200;
+    constexpr size_t bits_to_bytes(size_t bits) { return bits / 8; };
+    constexpr static size_t b_bytes = bits_to_bytes(1600);
     constexpr static uint64_t RC[24] = {
       0x0000000000000001ull, 0x0000000000008082ull, 0x800000000000808Aull,
       0x8000000080008000ull, 0x000000000000808Bull, 0x0000000080000001ull,
@@ -100,7 +101,7 @@ namespace picosha3 {
     } // namespace
 
     template <typename InIter>
-    inline void absorb(InIter first, InIter last, state_t& A) {
+    void absorb(InIter first, InIter last, state_t& A) {
         size_t x = 0;
         size_t y = 0;
         size_t i = 0;
@@ -112,12 +113,12 @@ namespace picosha3 {
     }
 
     template <typename InContainer>
-    inline void absorb(const InContainer& src, state_t& A) {
+    void absorb(const InContainer& src, state_t& A) {
         absorb(src.cbegin(), src.cend(), A);
     };
 
     template <typename OutIter>
-    inline OutIter squeeze(const state_t& A, OutIter first, OutIter last) {
+    OutIter squeeze(const state_t& A, OutIter first, OutIter last) {
         size_t x = 0;
         size_t y = 0;
         size_t i = 0;
@@ -134,13 +135,46 @@ namespace picosha3 {
     };
 
     template <typename OutContainer>
-    inline auto squeeze(const state_t& A, OutContainer& dest) {
+    typename OutContainer::iterator squeeze(const state_t& A,
+                                            OutContainer& dest) {
         return squeeze(A, dest.begin(), dest.end());
     }
 
+    enum class PaddingType {
+        SHA,
+        SHAKE,
+    };
+
+    template <typename Container>
+    void add_padding(Container& container, size_t padding_pos,
+                     PaddingType padding_type) {
+        auto q = container.size() - padding_pos;
+
+        if(padding_type == PaddingType::SHA) {
+            if(q == 1) {
+                container[padding_pos] = 0x86;
+            } else {
+                container[padding_pos] = 0x06;
+            }
+        } else if(padding_type == PaddingType::SHAKE) {
+            if(q == 1) {
+                container[padding_pos] = 0x9F;
+            } else {
+                container[padding_pos] = 0x1F;
+            }
+        }
+        container.back() = 0x80;
+    };
+
     template <typename InIter, typename OutIter, size_t rate_bytes>
-    inline void sponge(InIter in_first, InIter in_last, OutIter out_first,
-                       OutIter out_last) {
+    void sponge(InIter in_first, InIter in_last, OutIter out_first,
+                OutIter out_last, PaddingType padding_type) {
+        static_assert(
+          sizeof(typename std::iterator_traits<InIter>::value_type) == 1,
+          "The size of input iterator value_type must be one byte.");
+        static_assert(
+          sizeof(typename std::iterator_traits<OutIter>::value_type) == 1,
+          "The size of output iterator value_type must be one byte.");
         auto pos = in_first;
         auto m = std::distance(in_first, in_last);
         auto k = m / rate_bytes;
@@ -159,16 +193,8 @@ namespace picosha3 {
 
         std::array<byte_t, rate_bytes> tmp{};
         std::copy(pos, in_last, tmp.begin());
-        // TODO: Implement specific padding for SNAKE128, SNAKE256 or
-        // extendable-output functions!
         auto padding_pos = m % rate_bytes;
-        auto q = rate_bytes - padding_pos;
-        if(q == 1) {
-            tmp[padding_pos] = 0x86;
-        } else {
-            tmp[padding_pos] = 0x06;
-            tmp[rate_bytes - 1] = 0x80;
-        }
+        add_padding(tmp, padding_pos, padding_type);
         absorb(tmp, A);
         keccak_p(A);
 
@@ -180,39 +206,112 @@ namespace picosha3 {
     };
 
     template <typename InIter, typename OutIter, size_t capacity_bytes>
-    inline void keccak(InIter in_first, InIter in_last, OutIter out_first,
-                       OutIter out_last) {
+    void keccak(InIter in_first, InIter in_last, OutIter out_first,
+                OutIter out_last, PaddingType padding_type) {
         constexpr auto rate_bytes = b_bytes - capacity_bytes;
         sponge<InIter, OutIter, rate_bytes>(in_first, in_last, out_first,
-                                            out_last);
+                                            out_last, padding_type);
     }
 
-    template <typename InIter, size_t d_bytes>
-    inline std::array<byte_t, d_bytes> sha3(InIter in_first, InIter in_last) {
+    template <typename InIter, typename OutIter, size_t d_bytes>
+    void sha3(InIter in_first, InIter in_last, OutIter out_first,
+              OutIter out_last) {
+        static_assert(
+          d_bytes == bits_to_bytes(224) or d_bytes == bits_to_bytes(256) or
+            d_bytes == bits_to_bytes(384) or d_bytes == bits_to_bytes(512),
+          "The dimension of output of SHA3 function must be 224, 256, 384 or "
+          "512.");
         constexpr auto capacity_bytes = d_bytes * 2;
-        std::array<byte_t, d_bytes> hash{};
-        auto out_first = hash.begin();
-        auto out_last = hash.end();
         keccak<InIter, decltype(out_first), capacity_bytes>(
-          in_first, in_last, out_first, out_last);
-        return hash;
+          in_first, in_last, out_first, out_last, PaddingType::SHA);
     };
+
+    template <typename InIter, typename OutIter>
+    void sha3_224(InIter in_first, InIter in_last, OutIter out_first,
+                  OutIter out_last) {
+        sha3<InIter, OutIter, bits_to_bytes(224)>(in_first, in_last, out_first,
+                                                  out_last);
+    };
+
+    template <typename InContainer, typename OutContainer>
+    void sha3_224(const InContainer& src, OutContainer& dest) {
+        sha3_224(src.cbegin(), src.cend(), dest.begin(), dest.end());
+    }
+
+    template <typename InIter, typename OutIter>
+    void sha3_256(InIter in_first, InIter in_last, OutIter out_first,
+                  OutIter out_last) {
+        sha3<InIter, OutIter, bits_to_bytes(256)>(in_first, in_last, out_first,
+                                                  out_last);
+    };
+
+    template <typename InContainer, typename OutContainer>
+    void sha3_256(const InContainer& src, OutContainer& dest) {
+        sha3_256(src.cbegin(), src.cend(), dest.begin(), dest.end());
+    }
+
+    template <typename InIter, typename OutIter>
+    void sha3_384(InIter in_first, InIter in_last, OutIter out_first,
+                  OutIter out_last) {
+        sha3<InIter, OutIter, bits_to_bytes(384)>(in_first, in_last, out_first,
+                                                  out_last);
+    };
+
+    template <typename InContainer, typename OutContainer>
+    void sha3_384(const InContainer& src, OutContainer& dest) {
+        sha3_384(src.cbegin(), src.cend(), dest.begin(), dest.end());
+    }
+
+    template <typename InIter, typename OutIter>
+    void sha3_512(InIter in_first, InIter in_last, OutIter out_first,
+                  OutIter out_last) {
+        sha3<InIter, OutIter, bits_to_bytes(512)>(in_first, in_last, out_first,
+                                                  out_last);
+    };
+
+    template <typename InContainer, typename OutContainer>
+    void sha3_512(const InContainer& src, OutContainer& dest) {
+        sha3_512(src.cbegin(), src.cend(), dest.begin(), dest.end());
+    }
+
+    template <typename InIter, typename OutIter>
+    void shake128(InIter in_first, InIter in_last, OutIter out_first,
+                  OutIter out_last) {
+        keccak<InIter, OutIter, bits_to_bytes(128 * 2)>(
+          in_first, in_last, out_first, out_last, PaddingType::SHAKE);
+    };
+
+    template <typename InContainer, typename OutContainer>
+    void shake128(const InContainer& src, OutContainer& dest) {
+        shake128(src.cbegin(), src.cend(), dest.begin(), dest.end());
+    }
+
+    template <typename InIter, typename OutIter>
+    void shake256(InIter in_first, InIter in_last, OutIter out_first,
+                  OutIter out_last) {
+        keccak<InIter, OutIter, bits_to_bytes(256 * 2)>(
+          in_first, in_last, out_first, out_last, PaddingType::SHAKE);
+    };
+
+    template <typename InContainer, typename OutContainer>
+    void shake256(const InContainer& src, OutContainer& dest) {
+        shake256(src.cbegin(), src.cend(), dest.begin(), dest.end());
+    }
 
     template <typename InIter>
-    inline std::array<byte_t, 32> sha3_256(InIter first, InIter last) {
-        std::array<byte_t, 32> hash = sha3<InIter, 32>(first, last);
-        return hash;
-    };
-
-    template <typename InContainer>
-    inline std::string sha3_256_hex_string(const InContainer& src) {
-        auto hash = sha3_256(src.cbegin(), src.cend());
+    std::string get_hex_string(InIter first, InIter last) {
         std::stringstream ss;
         ss << std::hex;
-        for(const auto& c : hash) {
-            ss << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-        };
+        for(; first != last; ++first) {
+            ss << std::setw(2) << std::setfill('0')
+               << static_cast<uint64_t>(*first);
+        }
         return ss.str();
+    }
+
+    template <typename InContainer>
+    std::string get_hex_string(const InContainer& src) {
+        return get_hex_string(src.cbegin(), src.cend());
     }
 
 } // namespace picosha3

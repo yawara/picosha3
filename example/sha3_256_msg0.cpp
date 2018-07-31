@@ -6,20 +6,26 @@
 
 using namespace picosha3;
 
-template <size_t N>
-void pprint_bytes(const std::array<byte_t, N>& s) {
-    for(size_t i = 0; i < s.size(); ++i) {
-        int64_t tmp = s[i];
+template <typename Iter>
+void pprint_bytes(Iter first, Iter last) {
+    auto size = std::distance(first, last);
+    for(size_t i = 0; first != last; ++first, ++i) {
+        int64_t tmp = *first;
         std::cout << std::setw(2) << std::setfill('0') << std::hex
                   << std::uppercase << tmp << " ";
         if((i + 1) % 16 == 0) {
             std::cout << std::endl;
         }
     }
-    if(s.size() % 16 != 0) {
+    if(size % 16 != 0) {
         std::cout << std::endl;
     }
     std::cout << std::endl;
+}
+
+template <typename Container>
+void pprint_bytes(const Container& container) {
+    pprint_bytes(container.cbegin(), container.cend());
 };
 
 void reinitialize_state(state_t& A) {
@@ -134,22 +140,23 @@ int main(int argc, char const* argv[]) {
     std::array<byte_t, d_bytes> hash{};
     sponge<decltype(empty_string)::const_iterator, decltype(hash)::iterator,
            rate_bytes>(empty_string.cbegin(), empty_string.cend(), hash.begin(),
-                       hash.end());
+                       hash.end(), PaddingType::SHA);
     pprint_bytes(hash);
 
     std::cout << "keccak" << std::endl;
     assert(empty_string.cbegin() == empty_string.cend());
     keccak<decltype(empty_string)::const_iterator, decltype(hash)::iterator,
            64>(empty_string.cbegin(), empty_string.cend(), hash.begin(),
-               hash.end());
+               hash.end(), PaddingType::SHA);
     pprint_bytes(hash);
 
     std::cout << "sha3 ( 256 bits = 32 bytes )" << std::endl;
-    hash = sha3<decltype(empty_string)::const_iterator, 32>(
-      empty_string.cbegin(), empty_string.cend());
+    sha3<decltype(empty_string)::const_iterator, decltype(hash)::iterator, 32>(
+      empty_string.cbegin(), empty_string.cend(), hash.begin(), hash.end());
     pprint_bytes(hash);
 
-    hash = sha3_256(empty_string.begin(), empty_string.end());
+    sha3_256(empty_string.begin(), empty_string.end(), hash.begin(),
+             hash.end());
     std::cout << "Hash val by sha3_256 is" << std::endl;
     pprint_bytes(hash);
 
