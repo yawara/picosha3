@@ -2,8 +2,10 @@
 #define PICOSHA3_H
 
 #include <array>
+#include <cassert>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 namespace picosha3 {
     constexpr size_t bits_to_bytes(size_t bits) { return bits / 8; };
@@ -213,93 +215,8 @@ namespace picosha3 {
                                             out_last, padding_type);
     }
 
-    template <typename InIter, typename OutIter, size_t d_bytes>
-    void sha3(InIter in_first, InIter in_last, OutIter out_first,
-              OutIter out_last) {
-        static_assert(
-          d_bytes == bits_to_bytes(224) or d_bytes == bits_to_bytes(256) or
-            d_bytes == bits_to_bytes(384) or d_bytes == bits_to_bytes(512),
-          "The dimension of output of SHA3 function must be 224, 256, 384 or "
-          "512.");
-        constexpr auto capacity_bytes = d_bytes * 2;
-        keccak<InIter, decltype(out_first), capacity_bytes>(
-          in_first, in_last, out_first, out_last, PaddingType::SHA);
-    };
-
-    template <typename InIter, typename OutIter>
-    void sha3_224(InIter in_first, InIter in_last, OutIter out_first,
-                  OutIter out_last) {
-        sha3<InIter, OutIter, bits_to_bytes(224)>(in_first, in_last, out_first,
-                                                  out_last);
-    };
-
-    template <typename InContainer, typename OutContainer>
-    void sha3_224(const InContainer& src, OutContainer& dest) {
-        sha3_224(src.cbegin(), src.cend(), dest.begin(), dest.end());
-    }
-
-    template <typename InIter, typename OutIter>
-    void sha3_256(InIter in_first, InIter in_last, OutIter out_first,
-                  OutIter out_last) {
-        sha3<InIter, OutIter, bits_to_bytes(256)>(in_first, in_last, out_first,
-                                                  out_last);
-    };
-
-    template <typename InContainer, typename OutContainer>
-    void sha3_256(const InContainer& src, OutContainer& dest) {
-        sha3_256(src.cbegin(), src.cend(), dest.begin(), dest.end());
-    }
-
-    template <typename InIter, typename OutIter>
-    void sha3_384(InIter in_first, InIter in_last, OutIter out_first,
-                  OutIter out_last) {
-        sha3<InIter, OutIter, bits_to_bytes(384)>(in_first, in_last, out_first,
-                                                  out_last);
-    };
-
-    template <typename InContainer, typename OutContainer>
-    void sha3_384(const InContainer& src, OutContainer& dest) {
-        sha3_384(src.cbegin(), src.cend(), dest.begin(), dest.end());
-    }
-
-    template <typename InIter, typename OutIter>
-    void sha3_512(InIter in_first, InIter in_last, OutIter out_first,
-                  OutIter out_last) {
-        sha3<InIter, OutIter, bits_to_bytes(512)>(in_first, in_last, out_first,
-                                                  out_last);
-    };
-
-    template <typename InContainer, typename OutContainer>
-    void sha3_512(const InContainer& src, OutContainer& dest) {
-        sha3_512(src.cbegin(), src.cend(), dest.begin(), dest.end());
-    }
-
-    template <typename InIter, typename OutIter>
-    void shake128(InIter in_first, InIter in_last, OutIter out_first,
-                  OutIter out_last) {
-        keccak<InIter, OutIter, bits_to_bytes(128 * 2)>(
-          in_first, in_last, out_first, out_last, PaddingType::SHAKE);
-    };
-
-    template <typename InContainer, typename OutContainer>
-    void shake128(const InContainer& src, OutContainer& dest) {
-        shake128(src.cbegin(), src.cend(), dest.begin(), dest.end());
-    }
-
-    template <typename InIter, typename OutIter>
-    void shake256(InIter in_first, InIter in_last, OutIter out_first,
-                  OutIter out_last) {
-        keccak<InIter, OutIter, bits_to_bytes(256 * 2)>(
-          in_first, in_last, out_first, out_last, PaddingType::SHAKE);
-    };
-
-    template <typename InContainer, typename OutContainer>
-    void shake256(const InContainer& src, OutContainer& dest) {
-        shake256(src.cbegin(), src.cend(), dest.begin(), dest.end());
-    }
-
     template <typename InIter>
-    std::string get_hex_string(InIter first, InIter last) {
+    std::string bytes_to_hex_string(InIter first, InIter last) {
         std::stringstream ss;
         ss << std::hex;
         for(; first != last; ++first) {
@@ -310,10 +227,117 @@ namespace picosha3 {
     }
 
     template <typename InContainer>
-    std::string get_hex_string(const InContainer& src) {
-        return get_hex_string(src.cbegin(), src.cend());
+    std::string bytes_to_hex_string(const InContainer& src) {
+        return bytes_to_hex_string(src.cbegin(), src.cend());
     }
 
+    template <size_t d_bytes>
+    struct SHA3 {
+
+        constexpr static size_t capacity_bytes = d_bytes * 2;
+
+        static_assert(
+          d_bytes == bits_to_bytes(224) or d_bytes == bits_to_bytes(256) or
+            d_bytes == bits_to_bytes(384) or d_bytes == bits_to_bytes(512),
+          "The dimension of output of SHA3 function must be 224, 256, 384 or "
+          "512.");
+
+        template <typename InIter, typename OutIter>
+        void operator()(InIter in_first, InIter in_last, OutIter out_first,
+                        OutIter out_last) const {
+            assert(std::distance(out_first, out_last) == bits_to_bytes(224) ||
+                   std::distance(out_first, out_last) == bits_to_bytes(256) ||
+                   std::distance(out_first, out_last) == bits_to_bytes(384) ||
+                   std::distance(out_first, out_last) == bits_to_bytes(512));
+            keccak<InIter, decltype(out_first), capacity_bytes>(
+              in_first, in_last, out_first, out_last, PaddingType::SHA);
+        }
+
+        template <typename InIter, typename OutCotainer>
+        void operator()(InIter in_first, InIter in_last,
+                        OutCotainer& dest) const {
+            this->operator()(in_first, in_last, dest.begin(), dest.end());
+        };
+
+        template <typename InContainer, typename OutIter>
+        void operator()(const InContainer& src, OutIter out_first,
+                        OutIter out_last) {
+            this->operator()(src.cbegin(), src.cend(), out_first, out_last);
+        };
+
+        template <typename InContainer, typename OutContainer>
+        void operator()(const InContainer& src, OutContainer& dest) const {
+            this->operator()(src.cbegin(), src.cend(), dest.begin(),
+                             dest.end());
+        };
+
+        template <typename InIter>
+        std::string hex_string(InIter in_first, InIter in_last) const {
+            std::array<byte_t, d_bytes> hash{};
+            this->operator()(in_first, in_last, hash.begin(), hash.end());
+            return bytes_to_hex_string(hash);
+        };
+
+        template <typename InContainer>
+        std::string hex_string(const InContainer& src) const {
+            return this->hex_string(src.cbegin(), src.cend());
+        };
+    };
+
+    constexpr static auto sha3_224 = SHA3<bits_to_bytes(224)>{};
+    constexpr static auto sha3_256 = SHA3<bits_to_bytes(256)>{};
+    constexpr static auto sha3_384 = SHA3<bits_to_bytes(384)>{};
+    constexpr static auto sha3_512 = SHA3<bits_to_bytes(512)>{};
+
+    template <size_t strength_bytes>
+    struct SHAKE {
+        static_assert(strength_bytes == bits_to_bytes(128) or
+                        strength_bytes == bits_to_bytes(256),
+                      "SHAKE strength in bits must be 128 or 256.");
+
+        constexpr static size_t capacity_bytes = strength_bytes * 2;
+
+        template <typename InIter, typename OutIter>
+        void operator()(InIter in_first, InIter in_last, OutIter out_first,
+                        OutIter out_last) const {
+            keccak<InIter, decltype(out_first), capacity_bytes>(
+              in_first, in_last, out_first, out_last, PaddingType::SHAKE);
+        }
+
+        template <typename InIter, typename OutCotainer>
+        void operator()(InIter in_first, InIter in_last,
+                        OutCotainer& dest) const {
+            this->operator()(in_first, in_last, dest.begin(), dest.end());
+        }
+
+        template <typename InContainer, typename OutIter>
+        void operator()(const InContainer& src, OutIter out_first,
+                        OutIter out_last) {
+            this->operator()(src.cbegin(), src.cend(), out_first, out_last);
+        }
+
+        template <typename InContainer, typename OutContainer>
+        void operator()(const InContainer& src, OutContainer& dest) const {
+            this->operator()(src.cbegin(), src.cend(), dest.begin(),
+                             dest.end());
+        }
+
+        template <typename InIter>
+        std::string hex_string(InIter in_first, InIter in_last,
+                               size_t d_bytes) const {
+            std::vector<byte_t> hash(d_bytes);
+            this->operator()(in_first, in_last, hash.begin(), hash.end());
+            return bytes_to_hex_string(hash);
+        }
+
+        template <typename InContainer>
+        std::string hex_string(const InContainer& src, size_t d_byte) const {
+            return this->hex_string(src.cbegin(), src.cend(), d_byte);
+        }
+    };
+
+    constexpr static auto shake128 = SHAKE<bits_to_bytes(128)>{};
+    constexpr static auto shake256 = SHAKE<bits_to_bytes(256)>{};
 } // namespace picosha3
 
 #endif

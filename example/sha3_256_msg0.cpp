@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <vector>
 
 using namespace picosha3;
 
@@ -148,11 +149,6 @@ int main(int argc, char const* argv[]) {
     keccak<decltype(empty_string)::const_iterator, decltype(hash)::iterator,
            64>(empty_string.cbegin(), empty_string.cend(), hash.begin(),
                hash.end(), PaddingType::SHA);
-    pprint_bytes(hash);
-
-    std::cout << "sha3 ( 256 bits = 32 bytes )" << std::endl;
-    sha3<decltype(empty_string)::const_iterator, decltype(hash)::iterator, 32>(
-      empty_string.cbegin(), empty_string.cend(), hash.begin(), hash.end());
     pprint_bytes(hash);
 
     sha3_256(empty_string.begin(), empty_string.end(), hash.begin(),
