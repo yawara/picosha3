@@ -120,26 +120,26 @@ namespace picosha3 {
     };
 
     template <typename OutIter>
-    OutIter squeeze(const state_t& A, OutIter first, OutIter last) {
+    OutIter squeeze(const state_t& A, OutIter first, OutIter last,
+                    size_t rate_bytes) {
         size_t x = 0;
         size_t y = 0;
         size_t i = 0;
-        for(; first != last; ++first) {
+        for(size_t read_bytes = 0;
+            first != last && y < 5 && read_bytes < rate_bytes;
+            ++read_bytes, ++first) {
             auto tmp = static_cast<uint64_t>(A[x][y]);
             auto p = reinterpret_cast<byte_t*>(&tmp);
             *first = *(p + i);
             next(x, y, i);
-            if(y == 5) {
-                return first;
-            }
         }
-        return last;
+        return first;
     };
 
     template <typename OutContainer>
-    typename OutContainer::iterator squeeze(const state_t& A,
-                                            OutContainer& dest) {
-        return squeeze(A, dest.begin(), dest.end());
+    typename OutContainer::iterator
+    squeeze(const state_t& A, OutContainer& dest, size_t rate_bytes) {
+        return squeeze(A, dest.begin(), dest.end(), rate_bytes);
     }
 
     enum class PaddingType {
@@ -200,10 +200,10 @@ namespace picosha3 {
         absorb(tmp, A);
         keccak_p(A);
 
-        auto filled_pos = squeeze(A, out_first, out_last);
+        auto filled_pos = squeeze(A, out_first, out_last, rate_bytes);
         while(filled_pos != out_last) {
             keccak_p(A);
-            filled_pos = squeeze(A, filled_pos, out_last);
+            filled_pos = squeeze(A, filled_pos, out_last, rate_bytes);
         }
     };
 
