@@ -208,6 +208,11 @@ namespace picosha3 {
             std::copy(hash_.cbegin(), hash_.cend(), first);
         };
 
+        template <typename OutCotainer>
+        void get_hash_bytes(OutCotainer& dest) {
+            get_hash_bytes(dest.begin(), dest.end());
+        };
+
         template <typename InIter, typename OutIter>
         void operator()(InIter in_first, InIter in_last, OutIter out_first,
                         OutIter out_last) {
