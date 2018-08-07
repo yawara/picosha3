@@ -3,9 +3,9 @@
 
 #include <array>
 #include <cassert>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <vector>
 
 namespace picosha3 {
     constexpr size_t bits_to_bytes(size_t bits) { return bits / 8; };
@@ -147,74 +147,6 @@ namespace picosha3 {
         SHAKE,
     };
 
-    template <typename Container>
-    void add_padding(Container& container, size_t padding_pos,
-                     PaddingType padding_type) {
-        auto q = container.size() - padding_pos;
-
-        if(padding_type == PaddingType::SHA) {
-            if(q == 1) {
-                container[padding_pos] = 0x86;
-            } else {
-                container[padding_pos] = 0x06;
-            }
-        } else if(padding_type == PaddingType::SHAKE) {
-            if(q == 1) {
-                container[padding_pos] = 0x9F;
-            } else {
-                container[padding_pos] = 0x1F;
-            }
-        }
-        container.back() = 0x80;
-    };
-
-    template <typename InIter, typename OutIter, size_t rate_bytes>
-    void sponge(InIter in_first, InIter in_last, OutIter out_first,
-                OutIter out_last, PaddingType padding_type) {
-        static_assert(
-          sizeof(typename std::iterator_traits<InIter>::value_type) == 1,
-          "The size of input iterator value_type must be one byte.");
-        static_assert(
-          sizeof(typename std::iterator_traits<OutIter>::value_type) == 1,
-          "The size of output iterator value_type must be one byte.");
-        auto pos = in_first;
-        auto m = std::distance(in_first, in_last);
-        auto k = m / rate_bytes;
-
-        state_t A = {{{{0, 0, 0, 0, 0}},
-                      {{0, 0, 0, 0, 0}},
-                      {{0, 0, 0, 0, 0}},
-                      {{0, 0, 0, 0, 0}},
-                      {{0, 0, 0, 0, 0}}}};
-
-        for(size_t i = 0; i < k; ++i) {
-            absorb(pos, pos + rate_bytes, A);
-            keccak_p(A);
-            pos += rate_bytes;
-        }
-
-        std::array<byte_t, rate_bytes> tmp{};
-        std::copy(pos, in_last, tmp.begin());
-        auto padding_pos = m % rate_bytes;
-        add_padding(tmp, padding_pos, padding_type);
-        absorb(tmp, A);
-        keccak_p(A);
-
-        auto filled_pos = squeeze(A, out_first, out_last, rate_bytes);
-        while(filled_pos != out_last) {
-            keccak_p(A);
-            filled_pos = squeeze(A, filled_pos, out_last, rate_bytes);
-        }
-    };
-
-    template <typename InIter, typename OutIter, size_t capacity_bytes>
-    void keccak(InIter in_first, InIter in_last, OutIter out_first,
-                OutIter out_last, PaddingType padding_type) {
-        constexpr auto rate_bytes = b_bytes - capacity_bytes;
-        sponge<InIter, OutIter, rate_bytes>(in_first, in_last, out_first,
-                                            out_last, padding_type);
-    }
-
     template <typename InIter>
     std::string bytes_to_hex_string(InIter first, InIter last) {
         std::stringstream ss;
@@ -231,113 +163,194 @@ namespace picosha3 {
         return bytes_to_hex_string(src.cbegin(), src.cend());
     }
 
-    template <size_t d_bytes>
-    struct SHA3 {
+    template <size_t rate_bytes, size_t d_bytes, PaddingType padding_type>
+    class HashGenerator {
+    public:
+        HashGenerator()
+          : buffer_{}, buffer_pos_{buffer_.begin()}, A_{}, hash_{},
+            is_finished_{false} {}
 
-        constexpr static size_t capacity_bytes = d_bytes * 2;
+        void clear() {
+            clear_state();
+            clear_buffer();
+            is_finished_ = false;
+        }
 
+        template <typename InIter>
+        void process(InIter first, InIter last) {
+            static_assert(
+              sizeof(typename std::iterator_traits<InIter>::value_type) == 1,
+              "The size of input iterator value_type must be one byte.");
+
+            for(; first != last; ++first) {
+                *buffer_pos_ = *first;
+                if(++buffer_pos_ == buffer_.end()) {
+                    absorb(buffer_, A_);
+                    keccak_p(A_);
+                    clear_buffer();
+                }
+            }
+        };
+
+        void finish() {
+            add_padding();
+            absorb(buffer_, A_);
+            keccak_p(A_);
+            squeeze_();
+            is_finished_ = true;
+        };
+
+        template <typename OutIter>
+        void get_hash_bytes(OutIter first, OutIter last) {
+            if(!is_finished_) {
+                throw std::runtime_error("Not finished!");
+            }
+            std::copy(hash_.cbegin(), hash_.cend(), first);
+        };
+
+        template <typename InIter, typename OutIter>
+        void operator()(InIter in_first, InIter in_last, OutIter out_first,
+                        OutIter out_last) {
+            static_assert(
+              sizeof(typename std::iterator_traits<InIter>::value_type) == 1,
+              "The size of input iterator value_type must be one byte.");
+            static_assert(
+              sizeof(typename std::iterator_traits<OutIter>::value_type) == 1,
+              "The size of output iterator value_type must be one byte.");
+            process(in_first, in_last);
+            finish();
+            std::copy(hash_.cbegin(), hash_.cend(), out_first);
+            clear();
+        };
+
+        template <typename InIter, typename OutCotainer>
+        void operator()(InIter in_first, InIter in_last, OutCotainer& dest) {
+            operator()(in_first, in_last, dest.begin(), dest.end());
+        };
+
+        template <typename InContainer, typename OutIter>
+        void operator()(const InContainer& src, OutIter out_first,
+                        OutIter out_last) {
+            operator()(src.cbegin(), src.cend(), out_first, out_last);
+        };
+
+        template <typename InContainer, typename OutContainer>
+        void operator()(const InContainer& src, OutContainer& dest) {
+            operator()(src.cbegin(), src.cend(), dest.begin(), dest.end());
+        };
+
+        template <typename OutIter>
+        void operator()(std::ifstream& ifs, OutIter out_first,
+                        OutIter out_last) {
+            auto in_first = std::istreambuf_iterator<char>(ifs);
+            auto in_last = std::istreambuf_iterator<char>();
+            operator()(in_first, in_last, out_first, out_last);
+        };
+
+        template <typename OutCotainer>
+        void operator()(std::ifstream& ifs, OutCotainer& dest) {
+            operator()(ifs, dest.begin(), dest.end());
+        };
+
+        std::string get_hex_string() {
+            if(!is_finished_) {
+                throw std::runtime_error("Not finished!");
+            }
+            return bytes_to_hex_string(hash_);
+        };
+
+        template <typename InIter>
+        std::string get_hex_string(InIter in_first, InIter in_last) {
+            process(in_first, in_last);
+            finish();
+            auto hash = get_hex_string();
+            clear();
+            return hash;
+        };
+
+        template <typename InContainer>
+        std::string get_hex_string(const InContainer& src) {
+            return get_hex_string(src.cbegin(), src.cend());
+        };
+
+        std::string get_hex_string(std::ifstream& ifs) {
+            auto in_first = std::istreambuf_iterator<char>(ifs);
+            auto in_last = std::istreambuf_iterator<char>();
+            return get_hex_string(in_first, in_last);
+        };
+
+    private:
+        void clear_buffer() {
+            buffer_.fill(0);
+            buffer_pos_ = buffer_.begin();
+        };
+
+        void clear_state() {
+            for(auto& row : A_) {
+                row.fill(0);
+            }
+        };
+
+        void add_padding() {
+            const auto q =
+              buffer_.size() - std::distance(buffer_pos_, buffer_.begin());
+
+            if(padding_type == PaddingType::SHA) {
+                if(q == 1) {
+                    *buffer_pos_ = 0x86;
+                } else {
+                    *buffer_pos_ = 0x06;
+                    buffer_.back() = 0x80;
+                }
+            } else if(padding_type == PaddingType::SHAKE) {
+                if(q == 1) {
+                    *buffer_pos_ = 0x9F;
+                } else {
+                    *buffer_pos_ = 0x1F;
+                    buffer_.back() = 0x80;
+                }
+            }
+        };
+
+        void squeeze_() {
+            auto first = hash_.begin();
+            auto last = hash_.end();
+            first = squeeze(A_, first, last, rate_bytes);
+            while(first != last) {
+                keccak_p(A_);
+                first = squeeze(A_, first, last, rate_bytes);
+            }
+        };
+
+        std::array<byte_t, rate_bytes> buffer_;
+        typename decltype(buffer_)::iterator buffer_pos_;
+        state_t A_;
+        std::array<byte_t, d_bytes> hash_;
+        bool is_finished_;
+    };
+
+    template <size_t d_bits>
+    auto get_sha3_generator() {
         static_assert(
-          d_bytes == bits_to_bytes(224) or d_bytes == bits_to_bytes(256) or
-            d_bytes == bits_to_bytes(384) or d_bytes == bits_to_bytes(512),
-          "The dimension of output of SHA3 function must be 224, 256, 384 or "
-          "512.");
+          d_bits == 224 or d_bits == 256 or d_bits == 384 or d_bits == 512,
+          "SHA3 only accepts digest message length 224, 256 384 or 512 bits.");
+        constexpr auto d_bytes = bits_to_bytes(d_bits);
+        constexpr auto capacity_bytes = d_bytes * 2;
+        constexpr auto rate_bytes = b_bytes - capacity_bytes;
+        return HashGenerator<rate_bytes, d_bytes, PaddingType::SHA>{};
+    }
 
-        template <typename InIter, typename OutIter>
-        void operator()(InIter in_first, InIter in_last, OutIter out_first,
-                        OutIter out_last) const {
-            assert(std::distance(out_first, out_last) == bits_to_bytes(224) ||
-                   std::distance(out_first, out_last) == bits_to_bytes(256) ||
-                   std::distance(out_first, out_last) == bits_to_bytes(384) ||
-                   std::distance(out_first, out_last) == bits_to_bytes(512));
-            keccak<InIter, decltype(out_first), capacity_bytes>(
-              in_first, in_last, out_first, out_last, PaddingType::SHA);
-        }
+    template <size_t strength_bits, size_t d_bits>
+    auto get_shake_generator() {
+        static_assert(strength_bits == 128 or strength_bits == 256,
+                      "SHAKE only accepts strength 128 or 256 bits.");
+        constexpr auto strength_bytes = bits_to_bytes(strength_bits);
+        constexpr auto capacity_bytes = strength_bytes * 2;
+        constexpr auto rate_bytes = b_bytes - capacity_bytes;
+        constexpr auto d_bytes = bits_to_bytes(d_bits);
+        return HashGenerator<rate_bytes, d_bytes, PaddingType::SHAKE>{};
+    }
 
-        template <typename InIter, typename OutCotainer>
-        void operator()(InIter in_first, InIter in_last,
-                        OutCotainer& dest) const {
-            this->operator()(in_first, in_last, dest.begin(), dest.end());
-        };
-
-        template <typename InContainer, typename OutIter>
-        void operator()(const InContainer& src, OutIter out_first,
-                        OutIter out_last) {
-            this->operator()(src.cbegin(), src.cend(), out_first, out_last);
-        };
-
-        template <typename InContainer, typename OutContainer>
-        void operator()(const InContainer& src, OutContainer& dest) const {
-            this->operator()(src.cbegin(), src.cend(), dest.begin(),
-                             dest.end());
-        };
-
-        template <typename InIter>
-        std::string hex_string(InIter in_first, InIter in_last) const {
-            std::array<byte_t, d_bytes> hash{};
-            this->operator()(in_first, in_last, hash.begin(), hash.end());
-            return bytes_to_hex_string(hash);
-        };
-
-        template <typename InContainer>
-        std::string hex_string(const InContainer& src) const {
-            return this->hex_string(src.cbegin(), src.cend());
-        };
-    };
-
-    constexpr static auto sha3_224 = SHA3<bits_to_bytes(224)>{};
-    constexpr static auto sha3_256 = SHA3<bits_to_bytes(256)>{};
-    constexpr static auto sha3_384 = SHA3<bits_to_bytes(384)>{};
-    constexpr static auto sha3_512 = SHA3<bits_to_bytes(512)>{};
-
-    template <size_t strength_bytes>
-    struct SHAKE {
-        static_assert(strength_bytes == bits_to_bytes(128) or
-                        strength_bytes == bits_to_bytes(256),
-                      "SHAKE strength in bits must be 128 or 256.");
-
-        constexpr static size_t capacity_bytes = strength_bytes * 2;
-
-        template <typename InIter, typename OutIter>
-        void operator()(InIter in_first, InIter in_last, OutIter out_first,
-                        OutIter out_last) const {
-            keccak<InIter, decltype(out_first), capacity_bytes>(
-              in_first, in_last, out_first, out_last, PaddingType::SHAKE);
-        }
-
-        template <typename InIter, typename OutCotainer>
-        void operator()(InIter in_first, InIter in_last,
-                        OutCotainer& dest) const {
-            this->operator()(in_first, in_last, dest.begin(), dest.end());
-        }
-
-        template <typename InContainer, typename OutIter>
-        void operator()(const InContainer& src, OutIter out_first,
-                        OutIter out_last) {
-            this->operator()(src.cbegin(), src.cend(), out_first, out_last);
-        }
-
-        template <typename InContainer, typename OutContainer>
-        void operator()(const InContainer& src, OutContainer& dest) const {
-            this->operator()(src.cbegin(), src.cend(), dest.begin(),
-                             dest.end());
-        }
-
-        template <typename InIter>
-        std::string hex_string(InIter in_first, InIter in_last,
-                               size_t d_bytes) const {
-            std::vector<byte_t> hash(d_bytes);
-            this->operator()(in_first, in_last, hash.begin(), hash.end());
-            return bytes_to_hex_string(hash);
-        }
-
-        template <typename InContainer>
-        std::string hex_string(const InContainer& src, size_t d_byte) const {
-            return this->hex_string(src.cbegin(), src.cend(), d_byte);
-        }
-    };
-
-    constexpr static auto shake128 = SHAKE<bits_to_bytes(128)>{};
-    constexpr static auto shake256 = SHAKE<bits_to_bytes(256)>{};
 } // namespace picosha3
 
 #endif

@@ -87,39 +87,39 @@ int main(int argc, char const* argv[]) {
 
     std::cout << "About to Absorb data" << std::endl;
     std::cout << "State (in bytes)" << std::endl;
-    squeeze(A, output);
+    auto _ = squeeze(A, output, 200);
     pprint_bytes(output);
 
     std::cout << "Data to be absorbed" << std::endl;
     absorb(input, A);
-    squeeze(A, output);
+    _ = squeeze(A, output, 200);
     pprint_bytes(output);
 
     for(size_t round_index = 0; round_index < 24; ++round_index) {
         std::cout << "Round #" << round_index << std::endl;
 
         theta(A);
-        squeeze(A, output);
+        _ = squeeze(A, output, 200);
         std::cout << "After Theta" << std::endl;
         pprint_bytes(output);
 
         rho(A);
         std::cout << "After Rho" << std::endl;
-        squeeze(A, output);
+        _ = squeeze(A, output, 200);
         pprint_bytes(output);
 
         pi(A);
-        squeeze(A, output);
+        _ = squeeze(A, output, 200);
         std::cout << "After Pi" << std::endl;
         pprint_bytes(output);
 
         chi(A);
-        squeeze(A, output);
+        _ = squeeze(A, output, 200);
         std::cout << "After Chi" << std::endl;
         pprint_bytes(output);
 
         iota(A, round_index);
-        squeeze(A, output);
+        _ = squeeze(A, output, 200);
         std::cout << "After Iota" << std::endl;
         pprint_bytes(output);
     }
@@ -128,32 +128,18 @@ int main(int argc, char const* argv[]) {
     reinitialize_state(A);
     absorb(input, A);
     keccak_p(A);
-    squeeze(A, output);
+    _ = squeeze(A, output, 200);
     std::cout << "keccak_p" << std::endl;
     pprint_bytes(output);
     assert(output == expected);
 
     const std::string empty_string = "";
 
-    std::cout << "sponge" << std::endl;
-    constexpr auto d_bytes = 256 / 8;
-    constexpr auto rate_bytes = b_bytes - (d_bytes * 2);
-    std::array<byte_t, d_bytes> hash{};
-    sponge<decltype(empty_string)::const_iterator, decltype(hash)::iterator,
-           rate_bytes>(empty_string.cbegin(), empty_string.cend(), hash.begin(),
-                       hash.end(), PaddingType::SHA);
-    pprint_bytes(hash);
-
-    std::cout << "keccak" << std::endl;
-    assert(empty_string.cbegin() == empty_string.cend());
-    keccak<decltype(empty_string)::const_iterator, decltype(hash)::iterator,
-           64>(empty_string.cbegin(), empty_string.cend(), hash.begin(),
-               hash.end(), PaddingType::SHA);
-    pprint_bytes(hash);
-
-    sha3_256(empty_string.begin(), empty_string.end(), hash.begin(),
-             hash.end());
-    std::cout << "Hash val by sha3_256 is" << std::endl;
+    std::array<byte_t, 32> hash{};
+    auto hash_generator = get_sha3_generator<256>();
+    hash_generator(empty_string.begin(), empty_string.end(), hash.begin(),
+                   hash.end());
+    std::cout << "Hash val is" << std::endl;
     pprint_bytes(hash);
 
     return 0;
